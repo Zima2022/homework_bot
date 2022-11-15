@@ -8,7 +8,7 @@ import telegram
 from dotenv import load_dotenv
 from http import HTTPStatus
 from requests import HTTPError
-
+from telegram import TelegramError
 
 load_dotenv()
 
@@ -18,7 +18,6 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 RETRY_TIME = 600
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
-HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 
 HOMEWORK_STATUSES = {
     'approved': 'Работа проверена: ревьюеру всё понравилось. Ура!',
@@ -34,17 +33,23 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
-def send_message(bot, message):
+def send_message(bot: telegram.bot.Bot, message: str) -> None:
     """
     Отправляет сообщение в Telegram чат.
     Принимает на вход два параметра:
         экземпляр класса Bot и строку с текстом сообщения.
     """
-    bot.send_message(TELEGRAM_CHAT_ID, message)
-    logger.info(f'Бот отправил сообщение "{message}"')
+    try:
+        bot.send_message(TELEGRAM_CHAT_ID, message)
+    except TelegramError as error:
+        logger.error(
+            f'Бот не смог отправить сообщение {message}. Ошибка {error}'
+        )
+    else:
+        logger.info(f'Бот отправил сообщение "{message}"')
 
 
-def get_api_answer(current_timestamp):
+def get_api_answer(current_timestamp: int) -> dict:
     """
     Делает запрос к эндпоинту API-сервиса.
     В случае успешного запроса вернет ответ API в виде словаря.
@@ -52,8 +57,12 @@ def get_api_answer(current_timestamp):
         время в формате Unix time
     """
     timestamp = current_timestamp or int(time.time())
-    params = {'from_date': timestamp}
-    response = requests.get(ENDPOINT, headers=HEADERS, params=params)
+    request_params = {
+        'url': ENDPOINT,
+        'headers': {'Authorization': f'OAuth {PRACTICUM_TOKEN}'},
+        'params': {'from_date': timestamp},
+    }
+    response = requests.get(**request_params)
 
     if response.status_code != HTTPStatus.OK:
         message = f'Код ответа API: {response.status_code}'
@@ -68,7 +77,7 @@ def get_api_answer(current_timestamp):
     return response.json()
 
 
-def check_response(response):
+def check_response(response: dict) -> list:
     """
     Проверяет ответ API на корректность.
     Вернет список домашних работ, если он есть в ответе API.
@@ -85,12 +94,13 @@ def check_response(response):
         logger.error(message)
         raise TypeError(message)
 
-    if 'homeworks' not in response:
-        message = 'Отсвует ключ "homeworks" в ответе API'
-        logger.error(message)
-        raise KeyError(message)
+    for key in ['homeworks', 'current_date']:
+        if key not in response:
+            message = f'Отсутствует ключ "{key}" в ответе API'
+            logger.error(message)
+            raise KeyError(message)
 
-    homeworks = response.get('homeworks')
+    homeworks = response['homeworks']
 
     if not isinstance(homeworks, list):
         message = 'Объект по ключу "homeworks" не является списком'
@@ -100,12 +110,18 @@ def check_response(response):
     return homeworks
 
 
-def parse_status(homework):
+def parse_status(homework: list) -> str:
     """
     Извлекает из информации о конкретной домашней работе статус этой работы.
     Принимает на вход один параметр:
         домашнюю работу в виде словаря.
     """
+    for key in ['homework_name', 'status']:
+        if key not in homework:
+            message = f'Отсутствует ключ "{key}" в объекте "homework"'
+            logger.error(message)
+            raise KeyError(message)
+
     if not homework['homework_name']:
         message = 'Отсуствует имя проекта'
         logger.error(message)
@@ -122,38 +138,29 @@ def parse_status(homework):
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
-def check_tokens():
+def check_tokens() -> bool:
     """
     Проверяет доступность переменных окружения.
     Вернет False, если отсутствует хотя бы одна переменная окружения,
     Иначе вернет True.
     """
-    token_dict = {
-        'PRACTICUM_TOKEN': PRACTICUM_TOKEN,
-        'TELEGRAM_TOKEN': TELEGRAM_TOKEN,
-        'TELEGRAM_CHAT_ID': TELEGRAM_CHAT_ID,
-    }
+    result = all([PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID])
+    if not result:
+        logger.critical(f"Отсутствует обязательная переменная окружения")
 
-    for token_name, token in token_dict.items():
-        if not token:
-            logger.critical(
-                f"Отсутствует обязательная переменная окружения: {token_name}"
-            )
-
-    return all([PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID])
+    return result
 
 
-def main():
+def main() -> None:
     """Основная логика работы бота."""
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     current_timestamp = int(time.time())
 
     while True:
         try:
-            response = get_api_answer(current_timestamp)
             if not check_tokens():
-                break
-
+                sys.exit()
+            response = get_api_answer(current_timestamp)
             homework = check_response(response)
             if homework:
                 status = homework[0]['status']
@@ -164,6 +171,7 @@ def main():
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
             logger.error(message)
+            send_message(bot, message)
             time.sleep(RETRY_TIME)
         else:
             current_timestamp = int(time.time())
