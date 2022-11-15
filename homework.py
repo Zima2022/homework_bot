@@ -146,7 +146,7 @@ def check_tokens() -> bool:
     """
     result = all([PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID])
     if not result:
-        logger.critical(f"Отсутствует обязательная переменная окружения")
+        logger.critical('Отсутствует обязательная переменная окружения')
 
     return result
 
