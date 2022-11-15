@@ -39,6 +39,7 @@ def send_message(bot: telegram.bot.Bot, message: str) -> None:
     Принимает на вход два параметра:
         экземпляр класса Bot и строку с текстом сообщения.
     """
+    logger.debug(f'Бот пытается отправить сообщение {message}')
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
     except TelegramError as error:
@@ -116,17 +117,21 @@ def parse_status(homework: list) -> str:
     Принимает на вход один параметр:
         домашнюю работу в виде словаря.
     """
-    for key in ['homework_name', 'status']:
-        if key not in homework:
-            message = f'Отсутствует ключ "{key}" в объекте "homework"'
-            logger.error(message)
-            raise KeyError(message)
+    if 'homework_name' not in homework:
+        message = 'Отсутствует ключ "homework_name" в объекте "homework"'
+        logger.error(message)
+        raise KeyError(message)
 
     if not homework['homework_name']:
         message = 'Отсуствует имя проекта'
         logger.error(message)
     else:
         homework_name = homework['homework_name']
+
+    if 'status' not in homework:
+        message = 'Отсутствует ключ "status" в объекте "homework"'
+        logger.error(message)
+        raise KeyError(message)
 
     if homework['status'] not in HOMEWORK_STATUSES:
         message = 'Неизвестный статус проекта'
